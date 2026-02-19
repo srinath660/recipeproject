@@ -1,5 +1,7 @@
 const RecipeApp = (() => {
 
+
+// Recipe data - Foundation for all 4 parts
 const recipes = [
     {
         id: 1,
@@ -293,110 +295,432 @@ const recipes = [
     }
 ];
 
-let currentFilter = "all";
-let currentSort = "none";
+// Track current filter and sort settings
+let currentFilter = 'all';
+let currentSort = 'none';
+let searchQuery = '';
+let favorites = JSON.parse(localStorage.getItem('recipeFavorites')) || [];
+let debounceTimer;
 
-const container = document.querySelector("#recipe-container");
-const filterButtons = document.querySelectorAll(".filter-btn");
-const sortButtons = document.querySelectorAll(".sort-btn");
+const recipeContainer = document.querySelector('#recipe-container');
+const filterButtons = document.querySelectorAll('.filter-btn');
+const sortButtons = document.querySelectorAll('.sort-btn');
+console.log(recipeContainer);
+const searchInput = document.querySelector('#search-input');
+const clearSearchBtn = document.querySelector('#clear-search');
+const recipeCountDisplay = document.querySelector('#recipe-count');
 
+// Recursive function to render steps (handles nesting)
 const renderSteps = (steps, level = 0) => {
-    const listClass = level === 0 ? "steps-list" : "substeps-list";
+    // Determine the CSS class based on nesting level
+    const listClass = level === 0 ? 'steps-list' : 'substeps-list';
+    
     let html = `<ol class="${listClass}">`;
-
+    
     steps.forEach(step => {
-        if (typeof step === "string") {
+        // TODO: Check if step is a string or object
+        if (typeof step === 'string') {
+            // Simple step - just add as list item
             html += `<li>${step}</li>`;
         } else {
-            html += `<li>${step.text}`;
-            if (step.substeps) {
+            // Nested step - has text and substeps
+            html += `<li>`;
+            html += step.text;  // Main step text
+            
+            // TODO: Recursively call renderSteps for substeps
+            if (step.substeps && step.substeps.length > 0) {
+                // RECURSIVE CALL - this is the key!
                 html += renderSteps(step.substeps, level + 1);
             }
+            
             html += `</li>`;
         }
     });
-
+    
     html += `</ol>`;
     return html;
 };
 
-const createCard = recipe => `
-    <div class="recipe-card">
-        <h3>${recipe.title}</h3>
-        <div class="recipe-meta">
-            <span>⏱️ ${recipe.time} min</span>
-            <span class="difficulty ${recipe.difficulty}">${recipe.difficulty}</span>
-        </div>
-        <p>${recipe.description}</p>
-
-        <div class="card-actions">
-            <button class="toggle-btn" data-id="${recipe.id}" data-type="steps">📋 Show Steps</button>
-            <button class="toggle-btn" data-id="${recipe.id}" data-type="ingredients">🥗 Show Ingredients</button>
-        </div>
-
-        <div class="steps-container" data-id="${recipe.id}">
-            ${renderSteps(recipe.steps)}
-        </div>
-
-        <div class="ingredients-container" data-id="${recipe.id}">
-            <ul>${recipe.ingredients.map(i => `<li>${i}</li>`).join("")}</ul>
-        </div>
-    </div>
-`;
-
-const applyFilter = list => {
-    if (currentFilter === "all") return list;
-    if (currentFilter === "quick") return list.filter(r => r.time <= 30);
-    return list.filter(r => r.difficulty === currentFilter);
+// Create complete steps HTML for a recipe
+const createStepsHTML = (steps) => {
+    // TODO: Check if steps exist
+    if (!steps || steps.length === 0) {
+        return '<p>No steps available</p>';
+    }
+    
+    // Call the recursive function to generate the nested list
+    return renderSteps(steps);
 };
 
-const applySort = list => {
-    if (currentSort === "name") return [...list].sort((a,b)=>a.title.localeCompare(b.title));
-    if (currentSort === "time") return [...list].sort((a,b)=>a.time-b.time);
-    return list;
+// Handle toggle button clicks using event delegation
+const handleToggleClick = (event) => {
+    // Check if clicked element is a toggle button
+    if (!event.target.classList.contains('toggle-btn')) {
+        return;  // Not a toggle button, ignore
+    }
+    
+    const button = event.target;
+    const recipeId = button.dataset.recipeId;
+    const toggleType = button.dataset.toggle;  // "steps" or "ingredients"
+    
+    // TODO: Find the corresponding container
+    const containerClass = toggleType === 'steps' ? 'steps-container' : 'ingredients-container';
+    const container = document.querySelector(`.${containerClass}[data-recipe-id="${recipeId}"]`);
+    
+    // TODO: Toggle visibility
+    if (container) {
+        container.classList.toggle('visible');
+        
+        // Update button text
+        const isVisible = container.classList.contains('visible');
+        if (toggleType === 'steps') {
+            button.textContent = isVisible ? '📋 Hide Steps' : '📋 Show Steps';
+        } else {
+            button.textContent = isVisible ? '🥗 Hide Ingredients' : '🥗 Show Ingredients';
+        }
+    }
+};
+
+const createRecipeCard = (recipe) => {
+    // Check if favorited
+    const isFavorited = favorites.includes(recipe.id);
+    const heartIcon = isFavorited ? '❤️' : '🤍';
+    return `
+        <div class="recipe-card" data-id="${recipe.id}">
+            <!-- NEW: Favorite Button -->
+            <button class="favorite-btn ${isFavorited ? 'favorited' : ''}" 
+                    data-recipe-id="${recipe.id}">
+                ${heartIcon}
+            </button>
+            <h3>${recipe.title}</h3>
+            <div class="recipe-meta">
+                <span>⏱️ ${recipe.time} min</span>
+                <span class="difficulty ${recipe.difficulty}">${recipe.difficulty}</span>
+            </div>
+            <p>${recipe.description}</p>
+            <!-- NEW: Toggle Buttons -->
+            <div class="card-actions">
+                <button class="toggle-btn" data-recipe-id="${recipe.id}" data-toggle="steps">
+                    📋 Show Steps
+                </button>
+                <button class="toggle-btn" data-recipe-id="${recipe.id}" data-toggle="ingredients">
+                    🥗 Show Ingredients
+                </button>
+            </div>
+            <!-- NEW: Ingredients Section (hidden by default) -->
+            <div class="ingredients-container" data-recipe-id="${recipe.id}">
+                <h4>Ingredients:</h4>
+                <ul>
+                    
+                    ${recipe.ingredients.map(ingredient => `<li>${ingredient}</li>`).join('')}
+                </ul>
+            </div>
+            <!-- NEW: Steps Section (hidden by default) -->
+            <div class="steps-container" data-recipe-id="${recipe.id}">
+                <h4>Cooking Steps:</h4>
+                
+                ${createStepsHTML(recipe.steps)}
+            </div>
+        </div>
+    `;
+};
+
+console.log(createRecipeCard(recipes[0]));
+
+// Filter recipes by difficulty level
+const filterByDifficulty = (recipes, difficulty) => {
+    return recipes.filter(recipe => recipe.difficulty === difficulty);
+};
+
+// Filter recipes by maximum cooking time
+const filterByTime = (recipes, maxTime) => {
+    return recipes.filter(recipe => recipe.time <= maxTime);
+};
+
+// NEW: Search filter
+const filterBySearch = (recipes, query) => {
+    if (!query || query.trim() === '') {
+        return recipes;
+    }
+    
+    const lowerQuery = query.toLowerCase().trim();
+    
+    return recipes.filter(recipe => {
+        // TODO: Search in title
+        const titleMatch = recipe.title.toLowerCase().includes(lowerQuery);
+        
+        // TODO: Search in ingredients (use .some())
+        const ingredientMatch = recipe.ingredients.some(ingredient => 
+            // YOUR CODE HERE
+            ingredient.toLowerCase().includes(lowerQuery)
+        );
+        
+        // TODO: Search in description
+        const descriptionMatch = recipe.description.toLowerCase().includes(lowerQuery);
+        
+        return titleMatch || ingredientMatch || descriptionMatch;
+    });
+};
+
+const filterFavorites = (recipes) => {
+    return recipes.filter(recipe => 
+        favorites.includes(recipe.id)
+    );
+};
+
+// Apply the current filter
+const applyFilter = (recipes, filterType) => {
+    switch(filterType) {
+        case 'easy':
+            return filterByDifficulty(recipes, 'easy');
+        case 'medium':
+            return filterByDifficulty(recipes, 'medium');
+        case 'hard':
+            return filterByDifficulty(recipes, 'hard');
+        case 'quick':
+            return filterByTime(recipes, 30);
+        case 'favorites':              // ✅ ADD THIS
+            return filterFavorites(recipes);
+        case 'all':
+        default:
+            return recipes;  // Return all recipes (no filter)
+    }
+};
+
+// For testing 
+console.log('Easy recipes:', filterByDifficulty(recipes, 'easy'));
+console.log('Quick recipes:', filterByTime(recipes, 30));
+
+// Sort recipes by name (A-Z)
+const sortByName = (recipes) => {
+    // Create a copy with spread operator, then sort
+    return [...recipes].sort((a, b) => a.title.localeCompare(b.title));
+};
+
+// Sort recipes by cooking time (fastest first)
+const sortByTime = (recipes) => {
+    // Create a copy with spread operator, then sort
+    return [...recipes].sort((a, b) => a.time - b.time);
+};
+
+// Apply the current sort
+const applySort = (recipes, sortType) => {
+    switch(sortType) {
+        case 'name':
+            return sortByName(recipes);
+        case 'time':
+            return sortByTime(recipes);
+        case 'none':
+        default:
+            return recipes;  // Return as-is (no sorting)
+    }
 };
 
 const updateDisplay = () => {
-    let list = applyFilter(recipes);
-    list = applySort(list);
-    container.innerHTML = list.map(createCard).join("");
+    // Step 1: Start with all recipes
+    let recipesToDisplay = recipes;
+
+    // NEW: Apply search FIRST
+    recipesToDisplay = filterBySearch(recipesToDisplay, searchQuery);
+    
+    // Step 2: Apply current filter
+    recipesToDisplay = applyFilter(recipesToDisplay, currentFilter);
+    
+    // Step 3: Apply current sort
+    recipesToDisplay = applySort(recipesToDisplay, currentSort);
+
+    // NEW: Update counter
+    updateRecipeCounter(recipesToDisplay.length, recipes.length);
+    
+    // Step 4: Render the filtered and sorted recipes
+    renderRecipes(recipesToDisplay);
+
+    updateActiveButtons();
+    
+    // Step 5: Log for debugging
+    console.log(`Displaying ${recipesToDisplay.length} recipes (Filter: ${currentFilter}, Sort: ${currentSort})`);
 };
 
-const handleToggle = e => {
-    if (!e.target.classList.contains("toggle-btn")) return;
-
-    const id = e.target.dataset.id;
-    const type = e.target.dataset.type;
-
-    const section = document.querySelector(`.${type}-container[data-id="${id}"]`);
-    section.classList.toggle("visible");
-
-    e.target.textContent = section.classList.contains("visible")
-        ? (type === "steps" ? "📋 Hide Steps" : "🥗 Hide Ingredients")
-        : (type === "steps" ? "📋 Show Steps" : "🥗 Show Ingredients");
+// Save favorites to localStorage
+const saveFavorites = () => {
+    localStorage.setItem('recipeFavorites', JSON.stringify(favorites));
 };
 
-const init = () => {
-    filterButtons.forEach(btn =>
-        btn.addEventListener("click", e => {
-            currentFilter = e.target.dataset.filter;
-            updateDisplay();
-        })
-    );
-
-    sortButtons.forEach(btn =>
-        btn.addEventListener("click", e => {
-            currentSort = e.target.dataset.sort;
-            updateDisplay();
-        })
-    );
-
-    container.addEventListener("click", handleToggle);
-
+// Toggle favorite status
+const toggleFavorite = (recipeId) => {
+    const id = parseInt(recipeId);
+    
+    if (favorites.includes(id)) {
+        // Remove from favorites
+        favorites = favorites.filter(favId => favId !== id);
+    } else {
+        // Add to favorites
+        favorites.push(id);
+    }
+    
+    saveFavorites();
     updateDisplay();
 };
 
-return { init };
+// NEW: Search input handler
+const handleSearchInput = (event) => {
+    const query = event.target.value;
+
+    if (clearSearchBtn) {
+        clearSearchBtn.style.display = query ? 'block' : 'none';
+    }
+
+    clearTimeout(debounceTimer);
+
+    debounceTimer = setTimeout(() => {
+        searchQuery = query.trim();
+        updateDisplay();
+    }, 300);
+};
+
+// NEW: Clear search handler
+const handleClearSearch = () => {
+    searchInput.value = '';
+    searchQuery = '';
+    clearSearchBtn.style.display = 'none';
+    updateDisplay();
+};
+
+// NEW: Favorite button handler
+const handleFavoriteClick = (event) => {
+    if (!event.target.classList.contains('favorite-btn')) return;
+
+    const recipeId = event.target.dataset.recipeId;
+    toggleFavorite(recipeId);
+};
+
+
+// Update which button looks "active"
+const updateActiveButtons = () => {
+    // Update filter buttons
+    filterButtons.forEach(btn => {
+        const filterType = btn.dataset.filter;
+        if (filterType === currentFilter) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+    
+    // Update sort buttons
+    sortButtons.forEach(btn => {
+        const sortType = btn.dataset.sort;
+        if (sortType === currentSort) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+};
+
+// NEW: Update recipe counter
+const updateRecipeCounter = (showing, total) => {
+    if (recipeCountDisplay) {
+        recipeCountDisplay.textContent = 
+            `Showing ${showing} of ${total} recipes`;
+    }
+};
+
+// Handle filter button clicks
+const handleFilterClick = (event) => {
+    const filterType = event.target.dataset.filter;
+    
+    // Update state
+    currentFilter = filterType;
+    
+    // Update UI
+    updateActiveButtons();
+    updateDisplay();
+};
+
+// Handle sort button clicks
+const handleSortClick = (event) => {
+    const sortType = event.target.dataset.sort;
+    
+    // Update state
+    currentSort = sortType;
+    
+    // Update UI
+    updateActiveButtons();
+    updateDisplay();
+};
+
+const setupEventListeners = () => {
+    // Attach click handlers to all filter buttons
+    filterButtons.forEach(btn => {
+        btn.addEventListener('click', handleFilterClick);
+    });
+    
+    // Attach click handlers to all sort buttons
+    sortButtons.forEach(btn => {
+        btn.addEventListener('click', handleSortClick);
+    });
+
+    // NEW: Event delegation for toggle buttons
+    // One listener on parent handles all toggle buttons
+    recipeContainer.addEventListener('click', handleToggleClick);
+    
+    console.log('Event listeners attached!');
+
+    filterButtons.forEach(btn => {
+        btn.addEventListener('click', handleFilterClick);
+    });
+    
+    sortButtons.forEach(btn => {
+        btn.addEventListener('click', handleSortClick);
+    });
+    
+    recipeContainer.addEventListener('click', handleToggleClick);
+    
+    // NEW: Search input listener
+    if (searchInput) {
+        searchInput.addEventListener('input', handleSearchInput);
+    }
+    
+    // NEW: Clear search button listener
+    if (clearSearchBtn) {
+        clearSearchBtn.addEventListener('click', handleClearSearch);
+    }
+    
+    // NEW: Favorite click listener (event delegation)
+    recipeContainer.addEventListener('click', handleFavoriteClick);
+    
+    console.log('Event listeners attached!');
+};
+
+// Function to render recipes to the DOM
+const renderRecipes = (recipesToRender) => {
+    const recipeCardsHTML = recipesToRender
+        .map(createRecipeCard)
+        .join('');
+    
+    recipeContainer.innerHTML = recipeCardsHTML;
+};
+
+const init = () => {
+    console.log('🍳 RecipeJS initializing...');
+    setupEventListeners();
+    updateDisplay();
+    console.log('✅ RecipeJS ready!');
+    console.log(`📊 ${recipes.length} recipes loaded`);
+    console.log(`❤️  ${favorites.length} favorites saved`);
+};
+
+// Set up event listeners on page load
+setupEventListeners();
+
+// Initial render with default filter/sort
+updateDisplay();
+
+ return {
+        init,
+        updateDisplay
+    };
 
 })();
 
